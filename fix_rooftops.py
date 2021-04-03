@@ -5,6 +5,7 @@
 import argparse
 import rasterio
 import fiona
+from scipy import ndimage
 import numpy as np
 import math
 import numpy.ma as ma
@@ -73,20 +74,17 @@ class GeoLine:
 
         return GeoLine(a_x, a_y, b_x, b_y)
     
-    def compute_normals(self):
+    def compute_normals(self, scale = 1):
         dx = self.b.x - self.a.x
         dy = self.b.y - self.a.y
 
         n1 = GeoPoint(-dy, dx)
         n2 = GeoPoint(dy, -dx)
 
-        return [n1.normalize(), n2.normalize()]
+        return [n1.normalize() * scale, n2.normalize() * scale]
 
     def expand_to_box(self, length):
-        n1, n2 = self.compute_normals()
-        n1 = n1 * length
-        n2 = n2 * length
-
+        n1, n2 = self.compute_normals(length)
         p1 = (n1 + self.a)
         p2 = (n1 + self.b)
         p3 = (n2 + self.b)
@@ -96,9 +94,31 @@ class GeoLine:
                         p2.x, p2.y,
                         p3.x, p3.y,
                         p4.x, p4.y)
+    
+    def expand_to_boxes(self, length):
+        n1, n2 = self.compute_normals(length)
+        p1 = (n1 + self.a)
+        p2 = (n1 + self.b)
+        p3 = (n2 + self.b)
+        p4 = (n2 + self.a)
+
+        return [GeoRectangle(
+                p1.x, p1.y,
+                p2.x, p2.y,
+                self.a.x, self.a.y,
+                self.b.x, self.b.y
+            ), GeoRectangle(
+                self.b.x, self.b.y,
+                self.a.x, self.a.y,
+                p3.x, p3.y,
+                p4.x, p4.y
+            )]
 
     def buffer_rectangle(self, length):
-        return self.stretch(length).expand_to_box(length)
+        return self.expand_to_box(length)
+
+    def buffer_rectangles(self, length):
+        return self.expand_to_boxes(length)
 
     def __str__(self):
         return "[%s, %s]" % (self.a, self.b)
@@ -197,6 +217,14 @@ if str(dem_raster.crs) != cutlines_vector.crs.get('init').upper():
 
 dem = dem_raster.read()[0]
 
+def plot(img):
+    import matplotlib.pyplot as pl
+    pl.figure(figsize=(20, 10))
+    pl.title('Image')
+    pl.imshow(img)
+    pl.show()
+
+
 for cutline in cutlines_vector:
     geom = cutline.get('geometry')
     line_id = geom.get('id')
@@ -210,13 +238,22 @@ for cutline in cutlines_vector:
     # For each line segment
     for i in range(len(line_coords) - 1):
         line = GeoLine(*line_coords[i], *line_coords[i + 1])
-        buffer = line.buffer_rectangle(1)
+        buffers = line.buffer_rectangles(1)
+
+        buffer = buffers[1]
 
         if buffer.inside_raster():
             # bbox = buffer.bbox()
             mask = buffer.raster_mask()
+            masked_dem = ma.array(dem, mask=~mask)
+            # grad_x, grad_y = np.gradient(masked_dem)
+            
+            cutoff = np.percentile(masked_dem.compressed(), 20)
 
-            dem[mask] = 0
+            low_values = mask & (masked_dem < cutoff)
+            # print(ma.median(masked_dem))
+
+            dem[low_values] = 0
 
             profile = {
                 'driver': 'GTiff',
