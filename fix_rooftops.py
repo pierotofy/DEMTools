@@ -297,10 +297,10 @@ for cutline in cutlines_vector:
 
         high, low = identify_high_low(dem, buffers)
 
-        if high['buffer'].inside_raster():
-            dem = gapfill(dem, high['buffer'].raster_mask(), high['cutoff'], 'high')
-        else:
-            print("Buffered line %s outside of DEM raster bounds" % line_id)
+        # if high['buffer'].inside_raster():
+        #     dem = gapfill(dem, high['buffer'].raster_mask(), high['cutoff'], 'high')
+        # else:
+        #     print("Buffered line %s outside of DEM raster bounds" % line_id)
 
         if low['buffer'].inside_raster():
             dem = gapfill(dem, low['buffer'].raster_mask(), low['cutoff'], 'low')
