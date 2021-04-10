@@ -9,7 +9,7 @@ from scipy import ndimage
 import numpy as np
 import math
 import numpy.ma as ma
-from scipy import interpolate
+from scipy import interpolate, ndimage
 
 parser = argparse.ArgumentParser(description='Fix rooftops in a DEM')
 parser.add_argument('dem',
@@ -148,7 +148,10 @@ class GeoRectangle:
         for y in range(mask.shape[0]):
             for x in range(mask.shape[1]):
                 if bbox.contains(x, y):
-                    if self.contains_raster_coords(x, y):
+                    if self.contains_raster_coords(x + 0.5, y + 0.5) or \
+                       self.contains_raster_coords(x + 0.5, y - 0.5) or \
+                       self.contains_raster_coords(x - 0.5, y + 0.5) or \
+                       self.contains_raster_coords(x - 0.5, y - 0.5):
                         mask[y][x] = True
 
         return mask
@@ -233,6 +236,7 @@ def gapfill(dem, buffer_mask, cutoff, interpolation_type):
     else:
         value_mask = buffer_mask & (masked_dem >= cutoff)
 
+    # Linear interpolation
     coords = np.array(np.nonzero(~value_mask)).T
     values = masked_dem[~value_mask].compressed()
 
@@ -244,6 +248,13 @@ def gapfill(dem, buffer_mask, cutoff, interpolation_type):
 
     indices = (indices[0][filled_mask], indices[1][filled_mask])
     dem[indices] = filled[filled_mask]
+
+    # Nearest neighbor
+    # indices = ndimage.distance_transform_edt(value_mask, 
+    #                                     return_distances=False, 
+    #                                     return_indices=True)
+    # dem = dem[tuple(indices)]
+
     # dem[value_mask] = 0 if interpolation_type == 'high' else 999
     return dem
 
@@ -254,13 +265,15 @@ def identify_high_low(dem, buffers):
     m1 = ma.array(dem, mask=~buffers[0].raster_mask())
     m2 = ma.array(dem, mask=~buffers[1].raster_mask())
 
-    c1 = np.percentile(m1.compressed(), 20)
-    c2 = np.percentile(m2.compressed(), 20)
+    c1_high = np.percentile(m1.compressed(), 20)
+    c2_high = np.percentile(m2.compressed(), 20)
+    c1_low = np.percentile(m1.compressed(), 80)
+    c2_low = np.percentile(m2.compressed(), 80)
 
-    r1 = {'buffer': buffers[0], 'cutoff': c1}
-    r2 = {'buffer': buffers[1], 'cutoff': c2}
+    r1 = {'buffer': buffers[0], 'cutoff': c1_high if c1_high > c2_high else c1_low}
+    r2 = {'buffer': buffers[1], 'cutoff': c2_high if c2_high >= c1_high else c2_low}
 
-    if c1 > c2:
+    if c1_high > c2_high:
         return r1, r2
     else:
         return r2, r1
