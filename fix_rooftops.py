@@ -9,6 +9,7 @@ from scipy import ndimage
 import numpy as np
 import math
 import numpy.ma as ma
+from scipy import interpolate
 
 parser = argparse.ArgumentParser(description='Fix rooftops in a DEM')
 parser.add_argument('dem',
@@ -224,6 +225,45 @@ def plot(img):
     pl.imshow(img)
     pl.show()
 
+def gapfill(dem, buffer_mask, cutoff, interpolation_type):
+    masked_dem = ma.array(dem, mask=~buffer_mask)
+
+    if interpolation_type == 'high':
+        value_mask = buffer_mask & (masked_dem < cutoff)
+    else:
+        value_mask = buffer_mask & (masked_dem >= cutoff)
+
+    coords = np.array(np.nonzero(~value_mask)).T
+    values = masked_dem[~value_mask].compressed()
+
+    it = interpolate.LinearNDInterpolator(coords, values, fill_value=np.nan)
+    i, j = np.where(buffer_mask)
+    indices = np.nonzero(buffer_mask)
+    filled = it(list(zip(i, j)))
+    filled_mask = ~np.isnan(filled)
+
+    indices = (indices[0][filled_mask], indices[1][filled_mask])
+    dem[indices] = filled[filled_mask]
+    # dem[value_mask] = 0 if interpolation_type == 'high' else 999
+    return dem
+
+def identify_high_low(dem, buffers):
+    if len(buffers) != 2:
+        raise Exception("Buffers != 2")
+
+    m1 = ma.array(dem, mask=~buffers[0].raster_mask())
+    m2 = ma.array(dem, mask=~buffers[1].raster_mask())
+
+    c1 = np.percentile(m1.compressed(), 20)
+    c2 = np.percentile(m2.compressed(), 20)
+
+    r1 = {'buffer': buffers[0], 'cutoff': c1}
+    r2 = {'buffer': buffers[1], 'cutoff': c2}
+
+    if c1 > c2:
+        return r1, r2
+    else:
+        return r2, r1
 
 for cutline in cutlines_vector:
     geom = cutline.get('geometry')
@@ -238,43 +278,35 @@ for cutline in cutlines_vector:
     # For each line segment
     for i in range(len(line_coords) - 1):
         line = GeoLine(*line_coords[i], *line_coords[i + 1])
+        print("Correcting %s" % line)
+        
         buffers = line.buffer_rectangles(1)
 
-        buffer = buffers[1]
+        high, low = identify_high_low(dem, buffers)
 
-        if buffer.inside_raster():
-            # bbox = buffer.bbox()
-            mask = buffer.raster_mask()
-            masked_dem = ma.array(dem, mask=~mask)
-            # grad_x, grad_y = np.gradient(masked_dem)
-            
-            cutoff = np.percentile(masked_dem.compressed(), 20)
-
-            low_values = mask & (masked_dem < cutoff)
-            # print(ma.median(masked_dem))
-
-            dem[low_values] = 0
-
-            profile = {
-                'driver': 'GTiff',
-                'width': dem.shape[1],
-                'height': dem.shape[0],
-                'count': 1,
-                'dtype': dem.dtype.name,
-                'transform': dem_raster.transform,
-                'nodata': dem_raster.nodata,
-                'crs': dem_raster.crs
-            }
-
-            with rasterio.open(args.output, 'w', **profile) as wout:
-                wout.write(dem, 1)
-
-            exit(1)
-            print("TODO: extract buffer window")
+        if high['buffer'].inside_raster():
+            dem = gapfill(dem, high['buffer'].raster_mask(), high['cutoff'], 'high')
         else:
             print("Buffered line %s outside of DEM raster bounds" % line_id)
 
+        if low['buffer'].inside_raster():
+            dem = gapfill(dem, low['buffer'].raster_mask(), low['cutoff'], 'low')
+        else:
+            print("Buffered line %s outside of DEM raster bounds" % line_id)
 
+profile = {
+    'driver': 'GTiff',
+    'width': dem.shape[1],
+    'height': dem.shape[0],
+    'count': 1,
+    'dtype': dem.dtype.name,
+    'transform': dem_raster.transform,
+    'nodata': dem_raster.nodata,
+    'crs': dem_raster.crs
+}
+
+with rasterio.open(args.output, 'w', **profile) as wout:
+    wout.write(dem, 1)
 
 dem_raster.close()
 cutlines_vector.close()
