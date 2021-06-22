@@ -249,6 +249,9 @@ def gapfill(dem, buffer_mask, cutoff, interpolation_type):
     indices = (indices[0][filled_mask], indices[1][filled_mask])
     dem[indices] = filled[filled_mask]
 
+    # TODO: how do you select better/simpler interpolation points?
+    
+
     # Nearest neighbor
     # indices = ndimage.distance_transform_edt(value_mask, 
     #                                     return_distances=False, 
@@ -297,10 +300,10 @@ for cutline in cutlines_vector:
 
         high, low = identify_high_low(dem, buffers)
 
-        # if high['buffer'].inside_raster():
-        #     dem = gapfill(dem, high['buffer'].raster_mask(), high['cutoff'], 'high')
-        # else:
-        #     print("Buffered line %s outside of DEM raster bounds" % line_id)
+        if high['buffer'].inside_raster():
+            dem = gapfill(dem, high['buffer'].raster_mask(), high['cutoff'], 'high')
+        else:
+            print("Buffered line %s outside of DEM raster bounds" % line_id)
 
         if low['buffer'].inside_raster():
             dem = gapfill(dem, low['buffer'].raster_mask(), low['cutoff'], 'low')
